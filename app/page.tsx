@@ -5,9 +5,12 @@ import {
   getPopularMovies,
   getTopRatedMovies,
   getUpcomingMovies,
-  getRandomMovies, // [추가] 랜덤 영화 호출 함수
-  getMovieDetail,  // [추가] 상세 정보 호출 함수
+  getRandomMovies,
+  getMovieDetail,
 } from '@/lib/tmdb';
+// [추가] Gemini 함수 임포트
+import { generateCurationQuestions } from '@/lib/curatingqusetion'; 
+
 import CategorySelection from './components/CategorySelection';
 import MovieInfo from './components/MovieInfo';
 import Question from './components/Question';
@@ -19,22 +22,20 @@ export default function Home() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedMovie, setSelectedMovie] = useState<any | null>(null);
   const [question, setQuestion] = useState<string | null>(null);
-  
-  // [추가] 상세 정보가 포함된 큐레이션용 원본 데이터 풀
   const [moviePool, setMoviePool] = useState<any[]>([]);
 
-  const questions = [
-    'Are you looking for a movie from the last 5 years?',
-    'Do you prefer a movie with a rating above 8.0?',
-    'Show me a random movie',
-  ];
+  // [변경] 질문 목록을 상태(State)로 관리 (초기값은 빈 배열)
+  const [generatedQuestions, setGeneratedQuestions] = useState<string[]>([]);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false); // 로딩 상태 추가
 
   useEffect(() => {
     if (selectedCategory) {
       const fetchAndEnrichMovies = async () => {
+        setIsLoadingQuestions(true); // 로딩 시작
+        setQuestion(null); // 기존 질문 초기화
+        
         let basicList;
         
-        // 1. 카테고리에 따른 기본 목록 호출
         if (selectedCategory === '인기 작품') {
           basicList = await getPopularMovies();
         } else if (selectedCategory === '명작') {
@@ -46,25 +47,25 @@ export default function Home() {
         }
 
         if (basicList && basicList.results) {
-          // 2. [핵심] 상위 10개 영화에 대해 상세 정보(키워드, 크레딧 등) 병렬 조회
-          // 데이터가 너무 많으면 API 속도가 느려질 수 있으므로 상위 10개로 제한하여 풀을 구성합니다.
           const targets = basicList.results.slice(0, 10);
-          
           const detailedPromises = targets.map((movie: any) => getMovieDetail(movie.id));
           const detailedMovies = await Promise.all(detailedPromises);
-
-          // 상세 정보 가져오기에 성공한 영화만 필터링 (null 제외)
           const validPool = detailedMovies.filter((m) => m !== null);
 
-          console.log("구성된 큐레이션 풀:", validPool); 
-          // 개발자 도구 콘솔에서 validPool 내용을 확인하면 keywords, credits 등이 포함된 것을 볼 수 있습니다.
+          setMoviePool(validPool);
+          setMovies(validPool);
+          setFilteredMovies(validPool);
 
-          setMoviePool(validPool);       // 질문 생성을 위한 고밀도 데이터 풀 저장
-          setMovies(validPool);          // 화면에 보여줄 영화 목록 업데이트
-          setFilteredMovies(validPool);  // 필터링을 위한 목록 업데이트
+          // [추가] Gemini에게 질문 생성 요청
+          console.log("Gemini에게 질문 생성 요청 중...");
+          const aiQuestions = await generateCurationQuestions(validPool);
           
-          // TODO: 추후 이 시점에서 Gemini API를 호출하여 validPool 기반의 맞춤형 질문을 생성합니다.
-          setQuestion(questions[0]);     // 현재는 임시 질문 사용
+          setGeneratedQuestions(aiQuestions); // 생성된 질문 저장
+          if (aiQuestions.length > 0) {
+            setQuestion(aiQuestions[0]); // 첫 번째 질문 설정
+          }
+          
+          setIsLoadingQuestions(false); // 로딩 끝
         }
       };
       
@@ -73,34 +74,20 @@ export default function Home() {
   }, [selectedCategory]);
 
   const handleAnswer = (answer: string) => {
-    let newFilteredMovies = [...filteredMovies];
+    // 현재 질문에 대한 답변 처리 (로직은 추후 Gemini로 고도화 예정)
+    // 지금은 임시로, 답변을 하면 다음 질문으로 넘어가거나 영화를 하나 선택하는 단순 로직 유지
     
-    // 기존 하드코딩된 필터링 로직 (추후 Gemini가 생성한 질문 로직으로 대체 가능)
-    if (answer === questions[0]) {
-      const fiveYearsAgo = new Date().getFullYear() - 5;
-      newFilteredMovies = newFilteredMovies.filter(
-        (movie) => new Date(movie.release_date).getFullYear() >= fiveYearsAgo
-      );
-    } else if (answer === questions[1]) {
-      newFilteredMovies = newFilteredMovies.filter(
-        (movie) => movie.vote_average >= 8.0
-      );
-    } else if (answer === questions[2]) {
-      const randomIndex = Math.floor(Math.random() * newFilteredMovies.length);
-      setSelectedMovie(newFilteredMovies[randomIndex]);
-      setQuestion(null);
-      return;
-    }
-
-    setFilteredMovies(newFilteredMovies);
-
-    if (newFilteredMovies.length === 1) {
-      setSelectedMovie(newFilteredMovies[0]);
-      setQuestion(null);
+    // 현재 질문의 인덱스 찾기
+    const currentIndex = generatedQuestions.indexOf(question || '');
+    
+    // 다음 질문이 있다면 설정
+    if (currentIndex >= 0 && currentIndex < generatedQuestions.length - 1) {
+      setQuestion(generatedQuestions[currentIndex + 1]);
     } else {
-      // Remove the answered question from the list of available questions
-      const newQuestions = questions.filter((q) => q !== answer);
-      setQuestion(newQuestions.length > 0 ? newQuestions[0] : null);
+      // 질문이 끝나면 남은 영화 중 랜덤 1개 추천 (임시)
+      const randomIndex = Math.floor(Math.random() * filteredMovies.length);
+      setSelectedMovie(filteredMovies[randomIndex]);
+      setQuestion(null);
     }
   };
 
@@ -113,9 +100,21 @@ export default function Home() {
         {!selectedMovie && (
           <>
             <CategorySelection onCategorySelect={setSelectedCategory} />
-            {question && (
-              <Question questions={questions} onAnswer={handleAnswer} />
+            
+            {/* 로딩 표시 및 질문 컴포넌트 */}
+            {isLoadingQuestions ? (
+              <div className="text-blue-600 animate-pulse">
+                큐레이터가 영화를 분석하고 질문을 만들고 있습니다...
+              </div>
+            ) : (
+              question && (
+                <Question 
+                  questions={[question]} // 현재 질문 하나만 넘김
+                  onAnswer={handleAnswer} 
+                />
+              )
             )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredMovies.map((movie: any) => (
                 <div key={movie.id} className="flex flex-col items-center">

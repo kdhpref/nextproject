@@ -1,8 +1,11 @@
+// app/components/CategorySelection.tsx
+
 'use client';
 
 import { useState } from 'react';
 
-const categories = ['인기 작품', '명작', '최신 작품'];
+// [수정] '랜덤 추천' 추가
+const categories = ['인기 작품', '명작', '최신 작품', '랜덤 추천'];
 
 export default function CategorySelection({
   onCategorySelect,

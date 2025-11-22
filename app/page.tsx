@@ -1,3 +1,5 @@
+// app/page.tsx
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -5,6 +7,7 @@ import {
   getPopularMovies,
   getTopRatedMovies,
   getUpcomingMovies,
+  getRandomMovies, // [추가] 임포트 추가
 } from '@/lib/tmdb';
 import CategorySelection from './components/CategorySelection';
 import MovieInfo from './components/MovieInfo';
@@ -12,17 +15,14 @@ import Question from './components/Question';
 import Image from 'next/image';
 
 export default function Home() {
+  // ... 기존 state 변수들 유지 ...
   const [movies, setMovies] = useState<any[]>([]);
   const [filteredMovies, setFilteredMovies] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedMovie, setSelectedMovie] = useState<any | null>(null);
   const [question, setQuestion] = useState<string | null>(null);
 
-  const questions = [
-    'Are you looking for a movie from the last 5 years?',
-    'Do you prefer a movie with a rating above 8.0?',
-    'Show me a random movie',
-  ];
+  // ... questions 배열 유지 ...
 
   useEffect(() => {
     if (selectedCategory) {
@@ -34,16 +34,25 @@ export default function Home() {
           movieData = await getTopRatedMovies();
         } else if (selectedCategory === '최신 작품') {
           movieData = await getUpcomingMovies();
+        } else if (selectedCategory === '랜덤 추천') { // [추가] 랜덤 로직 처리
+          movieData = await getRandomMovies();
         }
-        setMovies(movieData.results);
-        setFilteredMovies(movieData.results);
-        setQuestion(questions[0]);
+        
+        if (movieData && movieData.results) {
+           setMovies(movieData.results);
+           setFilteredMovies(movieData.results);
+           setQuestion(questions[0]);
+        }
       };
       fetchMovies();
     }
   }, [selectedCategory]);
 
+  // ... handleAnswer 및 return JSX 로직 유지 ...
+  
+  // (참고: handleAnswer 부분과 return 부분은 기존 코드를 그대로 사용하시면 됩니다.)
   const handleAnswer = (answer: string) => {
+    // ... 기존 로직 ...
     let newFilteredMovies = [...filteredMovies];
     if (answer === questions[0]) {
       const fiveYearsAgo = new Date().getFullYear() - 5;
@@ -67,13 +76,13 @@ export default function Home() {
       setSelectedMovie(newFilteredMovies[0]);
       setQuestion(null);
     } else {
-      // Remove the answered question from the list of available questions
       const newQuestions = questions.filter((q) => q !== answer);
       setQuestion(newQuestions.length > 0 ? newQuestions[0] : null);
     }
   };
 
   return (
+    // ... 기존 JSX ...
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 font-sans dark:bg-black">
       <main className="flex min-h-screen w-full max-w-3xl flex-col items-center gap-8 py-16 px-8 bg-white dark:bg-black sm:items-start">
         <h1 className="text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">

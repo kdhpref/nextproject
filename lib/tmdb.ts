@@ -24,3 +24,13 @@ export const searchMovies = async (query: string) => {
   );
   return response.data;
 };
+
+export const getRandomMovies = async () => {
+  // 1부터 50페이지 사이 중 랜덤하게 하나를 선택
+  const randomPage = Math.floor(Math.random() * 50) + 1;
+  
+  const response = await axios.get(
+    `${BASE_URL}/discover/movie?api_key=${API_KEY}&language=ko-KR&region=KR&sort_by=popularity.desc&include_adult=false&include_video=false&page=${randomPage}`
+  );
+  return response.data;
+};

@@ -34,3 +34,15 @@ export const getRandomMovies = async () => {
   );
   return response.data;
 };
+
+export const getMovieDetail = async (id: number) => {
+  try {
+    const response = await axios.get(
+      `${BASE_URL}/movie/${id}?api_key=${API_KEY}&language=ko-KR&append_to_response=credits,keywords`
+    );
+    return response.data;
+  } catch (error) {
+    console.error(`Failed to fetch details for movie ${id}`, error);
+    return null;
+  }
+};

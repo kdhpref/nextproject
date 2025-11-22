@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-const categories = ['Popular', 'Top Rated', 'Upcoming'];
+const categories = ['인기 작품', '명작', '최신 작품'];
 
 export default function CategorySelection({
   onCategorySelect,

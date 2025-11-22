@@ -28,11 +28,11 @@ export default function Home() {
     if (selectedCategory) {
       const fetchMovies = async () => {
         let movieData;
-        if (selectedCategory === 'Popular') {
+        if (selectedCategory === '인기 작품') {
           movieData = await getPopularMovies();
-        } else if (selectedCategory === 'Top Rated') {
+        } else if (selectedCategory === '명작') {
           movieData = await getTopRatedMovies();
-        } else if (selectedCategory === 'Upcoming') {
+        } else if (selectedCategory === '최신 작품') {
           movieData = await getUpcomingMovies();
         }
         setMovies(movieData.results);

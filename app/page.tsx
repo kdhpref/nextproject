@@ -1,20 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import axios from 'axios';
 import {
   getPopularMovies,
   getTopRatedMovies,
   getUpcomingMovies,
   getRandomMovies,
   getMovieDetail,
+  // getMovieReviews 제거
 } from '@/lib/tmdb';
-import { generateCurationQuestions } from '@/lib/curatingqusetion';
 import CategorySelection from './components/CategorySelection';
 import MovieInfo from './components/MovieInfo';
 import Question from './components/Question';
 import Image from 'next/image';
 
-// 데이터 타입 정의
 interface QuestionOption {
   text: string;
   relatedMovieIds: number[];
@@ -26,172 +26,145 @@ interface CurationQuestion {
 }
 
 export default function Home() {
-  const [movies, setMovies] = useState<any[]>([]);
+  const [currentPool, setCurrentPool] = useState<any[]>([]);
+  
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedMovie, setSelectedMovie] = useState<any | null>(null);
+  const [currentQuestion, setCurrentQuestion] = useState<CurationQuestion | null>(null);
   
-  const [questions, setQuestions] = useState<CurationQuestion[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [scores, setScores] = useState<Record<number, number>>({});
-  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+  const [step, setStep] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("");
 
   useEffect(() => {
     if (selectedCategory) {
-      const fetchAndEnrichMovies = async () => {
-        setIsLoadingQuestions(true);
-        setQuestions([]);
-        setCurrentQuestionIndex(0);
-        setScores({});
+      const initMovies = async () => {
+        setIsLoading(true);
+        setLoadingMessage("영화 데이터 베이스를 연결 중입니다...");
+        setStep(0);
         setSelectedMovie(null);
-        
-        console.log(`--- [1단계] '${selectedCategory}' 목록 수집 시작 (3페이지/60개 요청) ---`);
-        const startTime = Date.now(); // 전체 시작 시간 측정
+        setCurrentQuestion(null);
 
         let rawMovies: any[] = [];
-        
         try {
-          if (selectedCategory === '인기 작품') {
-            const [p1, p2, p3] = await Promise.all([
-              getPopularMovies(1),
-              getPopularMovies(2),
-              getPopularMovies(3)
-            ]);
-            rawMovies = [...p1.results, ...p2.results, ...p3.results];
-          } else if (selectedCategory === '명작') {
-            const [p1, p2, p3] = await Promise.all([
-              getTopRatedMovies(1),
-              getTopRatedMovies(2),
-              getTopRatedMovies(3)
-            ]);
-            rawMovies = [...p1.results, ...p2.results, ...p3.results];
-          } else if (selectedCategory === '최신 작품') {
-            const [p1, p2, p3] = await Promise.all([
-              getUpcomingMovies(1),
-              getUpcomingMovies(2),
-              getUpcomingMovies(3)
-            ]);
-            rawMovies = [...p1.results, ...p2.results, ...p3.results];
-          } else if (selectedCategory === '랜덤 추천') {
-            const [p1, p2, p3] = await Promise.all([
-              getRandomMovies(),
-              getRandomMovies(),
-              getRandomMovies()
-            ]);
-            rawMovies = [...p1.results, ...p2.results, ...p3.results];
-          }
+          const fetchFn = selectedCategory === '인기 작품' ? getPopularMovies :
+                          selectedCategory === '명작' ? getTopRatedMovies :
+                          selectedCategory === '최신 작품' ? getUpcomingMovies : getRandomMovies;
+          
+          // 3페이지(60개) 병렬 호출
+          const results = await Promise.all([fetchFn(1), fetchFn(2), fetchFn(3)]);
+          rawMovies = results.flatMap(r => r.results);
         } catch (e) {
-          console.error("기본 목록 API 호출 실패", e);
-          setIsLoadingQuestions(false);
-          return;
+          console.error(e);
         }
 
-        console.log(`--- [1단계 완료] 기본 목록 수집 끝 (소요시간: ${Date.now() - startTime}ms) ---`);
-
-        // 중복 제거 및 60개 확정
-        const uniqueMovies = Array.from(new Map(rawMovies.map((m: any) => [m.id, m])).values());
-        const targets = uniqueMovies.slice(0, 60); // 60개 사용
-
-        console.log(`--- [2단계] 상세 정보(키워드/크레딧) 병렬 조회 시작 (대상: ${targets.length}개) ---`);
-        const step2Start = Date.now();
-
-        // 상세 정보 병렬 요청
-        const detailedPromises = targets.map((movie: any) => getMovieDetail(movie.id));
-        const detailedMovies = await Promise.all(detailedPromises);
+        const uniqueMovies = Array.from(new Map(rawMovies.map((m: any) => [m.id, m])).values()).slice(0, 60);
         
-        const validPool = detailedMovies.filter((m: any) => m !== null);
+        setLoadingMessage("영화들의 상세 정보를 분석 중입니다...");
+        // getMovieDetail에서 이미 overview를 가져오므로 추가 작업 불필요
+        const details = await Promise.all(uniqueMovies.map(m => getMovieDetail(m.id)));
+        const validPool = details.filter(m => m !== null);
 
-        console.log(`--- [2단계 완료] 상세 정보 수집 끝 (소요시간: ${Date.now() - step2Start}ms) ---`);
-        console.log(`최종 큐레이션 풀 크기: ${validPool.length}개`);
-
-        setMovies(validPool);
-
-        // 초기 점수 설정
-        const initialScores: Record<number, number> = {};
-        validPool.forEach((m: any) => initialScores[m.id] = 0);
-        setScores(initialScores);
-
-        console.log(`--- [3단계] Gemini에게 질문 생성 요청 시작 ---`);
-        const step3Start = Date.now();
-
-        // Gemini 호출
-        const aiQuestions = await generateCurationQuestions(validPool);
-        setQuestions(aiQuestions);
+        setCurrentPool(validPool);
         
-        console.log(`--- [3단계 완료] Gemini 응답 완료 (소요시간: ${Date.now() - step3Start}ms) ---`);
-        console.log(`--- [전체 로딩 완료] 총 소요시간: ${Date.now() - startTime}ms ---`);
-        
-        setIsLoadingQuestions(false);
+        // 1단계 질문 요청
+        await requestNextQuestion(validPool, 'initial');
       };
-      
-      fetchAndEnrichMovies();
+      initMovies();
     }
   }, [selectedCategory]);
 
-  const handleAnswer = (relatedIds: number[]) => {
-    const newScores = { ...scores };
-    relatedIds.forEach((id) => {
-      if (newScores[id] !== undefined) {
-        newScores[id] += 1;
-      }
-    });
-    setScores(newScores);
+  // Gemini에게 다음 단계 질문 요청
+  const requestNextQuestion = async (movies: any[], nextStepName: 'initial' | 'intermediate' | 'final') => {
+    setIsLoading(true);
+    
+    if (nextStepName === 'initial') setLoadingMessage("전체적인 분위기를 파악하고 있습니다...");
+    else if (nextStepName === 'intermediate') setLoadingMessage("당신의 취향을 더 깊이 분석합니다...");
+    else setLoadingMessage("최종 후보들의 줄거리를 읽고 있습니다..."); // 문구 변경
 
-    if (currentQuestionIndex < questions.length - 1) {
-      // 타입 명시
-      setCurrentQuestionIndex((prev: number) => prev + 1);
-    } else {
-      finishCuration(newScores);
+    try {
+      // [수정] 리뷰 가져오는 로직 제거 -> 바로 API 호출 (매우 빠름)
+      const res = await axios.post('/api/curation', { 
+        movies: movies, 
+        step: nextStepName 
+      });
+
+      if (res.data.questions && res.data.questions.length > 0) {
+        setCurrentQuestion(res.data.questions[0]);
+        
+        if (nextStepName === 'initial') setStep(1);
+        else if (nextStepName === 'intermediate') setStep(2);
+        else setStep(3);
+      }
+    } catch (error) {
+      console.error("질문 생성 실패", error);
+      setSelectedMovie(movies[0]);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const finishCuration = (finalScores: Record<number, number>) => {
-    // 타입 명시
-    let bestMovieId: number | null = null;
-    let maxScore = -1;
+  // 답변 처리
+  const handleAnswer = async (relatedIds: number[]) => {
+    // 선택된 영화만 생존
+    const nextPool = currentPool.filter(m => relatedIds.includes(m.id));
+    setCurrentPool(nextPool);
 
-    Object.entries(finalScores).forEach(([idStr, score]) => {
-      const id = Number(idStr);
-      if (score > maxScore) {
-        maxScore = score;
-        bestMovieId = id;
-      }
-    });
+    if (nextPool.length === 1) {
+      setSelectedMovie(nextPool[0]);
+      return;
+    }
+    
+    if (nextPool.length === 0) {
+      setSelectedMovie(currentPool[0]); // 예외 처리
+      return;
+    }
 
-    // m: any로 타입 완화하여 오류 방지
-    const recommended = movies.find((m: any) => m.id === bestMovieId);
-    setSelectedMovie(recommended || movies[0]);
+    if (step === 1) {
+      await requestNextQuestion(nextPool, 'intermediate');
+    } else if (step === 2) {
+      // 5개 이하면 바로 결승전, 아니면 중간 질문 한 번 더? (여기선 바로 Final)
+      await requestNextQuestion(nextPool, 'final');
+    } else if (step === 3) {
+      setSelectedMovie(nextPool[0]);
+    }
   };
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 font-sans dark:bg-black">
       <main className="flex min-h-screen w-full max-w-3xl flex-col items-center gap-8 py-16 px-8 bg-white dark:bg-black sm:items-start">
         <h1 className="text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-          Movie Curation
+          AI Interactive Curation
         </h1>
         
         {!selectedMovie && (
           <>
-            <CategorySelection onCategorySelect={setSelectedCategory} />
+            {step === 0 && <CategorySelection onCategorySelect={setSelectedCategory} />}
             
-            {isLoadingQuestions ? (
-              <div className="mt-8 text-center w-full space-y-2">
-                <p className="text-lg text-blue-600 font-semibold animate-pulse">
-                  🎬 영화 60편을 분석하여 질문을 생성 중입니다...
+            {isLoading ? (
+              <div className="mt-12 text-center w-full space-y-4">
+                <div className="text-4xl animate-bounce">🤔</div>
+                <p className="text-lg text-blue-600 font-medium animate-pulse">
+                  {loadingMessage}
                 </p>
-                <p className="text-sm text-zinc-500">
-                  데이터 수집 및 AI 분석 진행 중 (콘솔 로그를 확인하세요)
+                <p className="text-sm text-zinc-400">
+                  현재 후보 영화: {currentPool.length > 0 ? currentPool.length : 0}편
                 </p>
               </div>
             ) : (
-              questions.length > 0 && (
-                <div className="mt-8 w-full">
-                  <div className="mb-4 text-sm text-zinc-500 font-medium">
-                    Question {currentQuestionIndex + 1} / {questions.length}
+              currentQuestion && (
+                <div className="mt-8 w-full animate-fade-in-up">
+                  <div className="mb-2 text-xs font-bold text-blue-500 tracking-widest uppercase">
+                    {step === 1 ? "STEP 1: VIBE CHECK" : 
+                     step === 2 ? "STEP 2: DEEP DIVE" : "FINAL DECISION"}
                   </div>
                   <Question 
-                    data={questions[currentQuestionIndex]}
+                    data={currentQuestion}
                     onAnswer={handleAnswer} 
                   />
+                  <div className="mt-4 text-right text-xs text-zinc-400">
+                    남은 후보: {currentPool.length}편
+                  </div>
                 </div>
               )
             )}
@@ -200,15 +173,15 @@ export default function Home() {
 
         {selectedMovie && (
           <div className="animate-fade-in w-full">
-            <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-blue-700 dark:text-blue-300">
-              🎉 60개의 후보 중 당신에게 딱 맞는 영화를 찾았습니다!
+            <div className="mb-6 p-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg shadow-lg">
+              🎉 60편의 영화 중, 당신의 선택과 완벽하게 일치하는 영화입니다!
             </div>
             <MovieInfo movie={selectedMovie} />
             <button 
               onClick={() => window.location.reload()} 
-              className="mt-8 px-6 py-2 bg-zinc-800 text-white rounded-full hover:bg-zinc-700"
+              className="mt-8 px-6 py-3 w-full bg-zinc-900 text-white rounded-xl hover:bg-zinc-800 font-bold transition-all"
             >
-              다시 하기
+              다시 처음부터 하기
             </button>
           </div>
         )}

@@ -48,3 +48,20 @@ export const searchMovies = async (query: string) => {
   );
   return response.data;
 };
+
+export const getMovieReviews = async (id: number) => {
+  try {
+    // 한국어 리뷰 시도
+    let response = await axios.get(`${BASE_URL}/movie/${id}/reviews?api_key=${API_KEY}&language=ko-KR`);
+    
+    // 한국어 리뷰가 없으면 영어 리뷰 가져오기
+    if (response.data.results.length === 0) {
+      response = await axios.get(`${BASE_URL}/movie/${id}/reviews?api_key=${API_KEY}&language=en-US`);
+    }
+    
+    // 상위 3개 리뷰만 반환
+    return response.data.results.slice(0, 3).map((r: any) => r.content);
+  } catch (error) {
+    return [];
+  }
+};

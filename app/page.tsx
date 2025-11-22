@@ -8,87 +8,158 @@ import {
   getRandomMovies,
   getMovieDetail,
 } from '@/lib/tmdb';
-// [추가] Gemini 함수 임포트
-import { generateCurationQuestions } from '@/lib/curatingqusetion'; 
-
+import { generateCurationQuestions } from '@/lib/curatingqusetion';
 import CategorySelection from './components/CategorySelection';
 import MovieInfo from './components/MovieInfo';
 import Question from './components/Question';
 import Image from 'next/image';
 
+// 데이터 타입 정의
+interface QuestionOption {
+  text: string;
+  relatedMovieIds: number[];
+}
+
+interface CurationQuestion {
+  questionText: string;
+  options: QuestionOption[];
+}
+
 export default function Home() {
   const [movies, setMovies] = useState<any[]>([]);
-  const [filteredMovies, setFilteredMovies] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedMovie, setSelectedMovie] = useState<any | null>(null);
-  const [question, setQuestion] = useState<string | null>(null);
-  const [moviePool, setMoviePool] = useState<any[]>([]);
-
-  // [변경] 질문 목록을 상태(State)로 관리 (초기값은 빈 배열)
-  const [generatedQuestions, setGeneratedQuestions] = useState<string[]>([]);
-  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false); // 로딩 상태 추가
+  
+  const [questions, setQuestions] = useState<CurationQuestion[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [scores, setScores] = useState<Record<number, number>>({});
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
 
   useEffect(() => {
     if (selectedCategory) {
       const fetchAndEnrichMovies = async () => {
-        setIsLoadingQuestions(true); // 로딩 시작
-        setQuestion(null); // 기존 질문 초기화
+        setIsLoadingQuestions(true);
+        setQuestions([]);
+        setCurrentQuestionIndex(0);
+        setScores({});
+        setSelectedMovie(null);
         
-        let basicList;
+        console.log(`--- [1단계] '${selectedCategory}' 목록 수집 시작 (3페이지/60개 요청) ---`);
+        const startTime = Date.now(); // 전체 시작 시간 측정
+
+        let rawMovies: any[] = [];
         
-        if (selectedCategory === '인기 작품') {
-          basicList = await getPopularMovies();
-        } else if (selectedCategory === '명작') {
-          basicList = await getTopRatedMovies();
-        } else if (selectedCategory === '최신 작품') {
-          basicList = await getUpcomingMovies();
-        } else if (selectedCategory === '랜덤 추천') {
-          basicList = await getRandomMovies();
-        }
-
-        if (basicList && basicList.results) {
-          const targets = basicList.results.slice(0, 10);
-          const detailedPromises = targets.map((movie: any) => getMovieDetail(movie.id));
-          const detailedMovies = await Promise.all(detailedPromises);
-          const validPool = detailedMovies.filter((m) => m !== null);
-
-          setMoviePool(validPool);
-          setMovies(validPool);
-          setFilteredMovies(validPool);
-
-          // [추가] Gemini에게 질문 생성 요청
-          console.log("Gemini에게 질문 생성 요청 중...");
-          const aiQuestions = await generateCurationQuestions(validPool);
-          
-          setGeneratedQuestions(aiQuestions); // 생성된 질문 저장
-          if (aiQuestions.length > 0) {
-            setQuestion(aiQuestions[0]); // 첫 번째 질문 설정
+        try {
+          if (selectedCategory === '인기 작품') {
+            const [p1, p2, p3] = await Promise.all([
+              getPopularMovies(1),
+              getPopularMovies(2),
+              getPopularMovies(3)
+            ]);
+            rawMovies = [...p1.results, ...p2.results, ...p3.results];
+          } else if (selectedCategory === '명작') {
+            const [p1, p2, p3] = await Promise.all([
+              getTopRatedMovies(1),
+              getTopRatedMovies(2),
+              getTopRatedMovies(3)
+            ]);
+            rawMovies = [...p1.results, ...p2.results, ...p3.results];
+          } else if (selectedCategory === '최신 작품') {
+            const [p1, p2, p3] = await Promise.all([
+              getUpcomingMovies(1),
+              getUpcomingMovies(2),
+              getUpcomingMovies(3)
+            ]);
+            rawMovies = [...p1.results, ...p2.results, ...p3.results];
+          } else if (selectedCategory === '랜덤 추천') {
+            const [p1, p2, p3] = await Promise.all([
+              getRandomMovies(),
+              getRandomMovies(),
+              getRandomMovies()
+            ]);
+            rawMovies = [...p1.results, ...p2.results, ...p3.results];
           }
-          
-          setIsLoadingQuestions(false); // 로딩 끝
+        } catch (e) {
+          console.error("기본 목록 API 호출 실패", e);
+          setIsLoadingQuestions(false);
+          return;
         }
+
+        console.log(`--- [1단계 완료] 기본 목록 수집 끝 (소요시간: ${Date.now() - startTime}ms) ---`);
+
+        // 중복 제거 및 60개 확정
+        const uniqueMovies = Array.from(new Map(rawMovies.map((m: any) => [m.id, m])).values());
+        const targets = uniqueMovies.slice(0, 60); // 60개 사용
+
+        console.log(`--- [2단계] 상세 정보(키워드/크레딧) 병렬 조회 시작 (대상: ${targets.length}개) ---`);
+        const step2Start = Date.now();
+
+        // 상세 정보 병렬 요청
+        const detailedPromises = targets.map((movie: any) => getMovieDetail(movie.id));
+        const detailedMovies = await Promise.all(detailedPromises);
+        
+        const validPool = detailedMovies.filter((m: any) => m !== null);
+
+        console.log(`--- [2단계 완료] 상세 정보 수집 끝 (소요시간: ${Date.now() - step2Start}ms) ---`);
+        console.log(`최종 큐레이션 풀 크기: ${validPool.length}개`);
+
+        setMovies(validPool);
+
+        // 초기 점수 설정
+        const initialScores: Record<number, number> = {};
+        validPool.forEach((m: any) => initialScores[m.id] = 0);
+        setScores(initialScores);
+
+        console.log(`--- [3단계] Gemini에게 질문 생성 요청 시작 ---`);
+        const step3Start = Date.now();
+
+        // Gemini 호출
+        const aiQuestions = await generateCurationQuestions(validPool);
+        setQuestions(aiQuestions);
+        
+        console.log(`--- [3단계 완료] Gemini 응답 완료 (소요시간: ${Date.now() - step3Start}ms) ---`);
+        console.log(`--- [전체 로딩 완료] 총 소요시간: ${Date.now() - startTime}ms ---`);
+        
+        setIsLoadingQuestions(false);
       };
       
       fetchAndEnrichMovies();
     }
   }, [selectedCategory]);
 
-  const handleAnswer = (answer: string) => {
-    // 현재 질문에 대한 답변 처리 (로직은 추후 Gemini로 고도화 예정)
-    // 지금은 임시로, 답변을 하면 다음 질문으로 넘어가거나 영화를 하나 선택하는 단순 로직 유지
-    
-    // 현재 질문의 인덱스 찾기
-    const currentIndex = generatedQuestions.indexOf(question || '');
-    
-    // 다음 질문이 있다면 설정
-    if (currentIndex >= 0 && currentIndex < generatedQuestions.length - 1) {
-      setQuestion(generatedQuestions[currentIndex + 1]);
+  const handleAnswer = (relatedIds: number[]) => {
+    const newScores = { ...scores };
+    relatedIds.forEach((id) => {
+      if (newScores[id] !== undefined) {
+        newScores[id] += 1;
+      }
+    });
+    setScores(newScores);
+
+    if (currentQuestionIndex < questions.length - 1) {
+      // 타입 명시
+      setCurrentQuestionIndex((prev: number) => prev + 1);
     } else {
-      // 질문이 끝나면 남은 영화 중 랜덤 1개 추천 (임시)
-      const randomIndex = Math.floor(Math.random() * filteredMovies.length);
-      setSelectedMovie(filteredMovies[randomIndex]);
-      setQuestion(null);
+      finishCuration(newScores);
     }
+  };
+
+  const finishCuration = (finalScores: Record<number, number>) => {
+    // 타입 명시
+    let bestMovieId: number | null = null;
+    let maxScore = -1;
+
+    Object.entries(finalScores).forEach(([idStr, score]) => {
+      const id = Number(idStr);
+      if (score > maxScore) {
+        maxScore = score;
+        bestMovieId = id;
+      }
+    });
+
+    // m: any로 타입 완화하여 오류 방지
+    const recommended = movies.find((m: any) => m.id === bestMovieId);
+    setSelectedMovie(recommended || movies[0]);
   };
 
   return (
@@ -97,44 +168,50 @@ export default function Home() {
         <h1 className="text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
           Movie Curation
         </h1>
+        
         {!selectedMovie && (
           <>
             <CategorySelection onCategorySelect={setSelectedCategory} />
             
-            {/* 로딩 표시 및 질문 컴포넌트 */}
             {isLoadingQuestions ? (
-              <div className="text-blue-600 animate-pulse">
-                큐레이터가 영화를 분석하고 질문을 만들고 있습니다...
+              <div className="mt-8 text-center w-full space-y-2">
+                <p className="text-lg text-blue-600 font-semibold animate-pulse">
+                  🎬 영화 60편을 분석하여 질문을 생성 중입니다...
+                </p>
+                <p className="text-sm text-zinc-500">
+                  데이터 수집 및 AI 분석 진행 중 (콘솔 로그를 확인하세요)
+                </p>
               </div>
             ) : (
-              question && (
-                <Question 
-                  questions={[question]} // 현재 질문 하나만 넘김
-                  onAnswer={handleAnswer} 
-                />
+              questions.length > 0 && (
+                <div className="mt-8 w-full">
+                  <div className="mb-4 text-sm text-zinc-500 font-medium">
+                    Question {currentQuestionIndex + 1} / {questions.length}
+                  </div>
+                  <Question 
+                    data={questions[currentQuestionIndex]}
+                    onAnswer={handleAnswer} 
+                  />
+                </div>
               )
             )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {filteredMovies.map((movie: any) => (
-                <div key={movie.id} className="flex flex-col items-center">
-                  <Image
-                    src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
-                    alt={movie.title}
-                    width={200}
-                    height={300}
-                    className="rounded-md"
-                  />
-                  <h3 className="text-lg font-semibold">{movie.title}</h3>
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                    {movie.release_date}
-                  </p>
-                </div>
-              ))}
-            </div>
           </>
         )}
-        {selectedMovie && <MovieInfo movie={selectedMovie} />}
+
+        {selectedMovie && (
+          <div className="animate-fade-in w-full">
+            <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-blue-700 dark:text-blue-300">
+              🎉 60개의 후보 중 당신에게 딱 맞는 영화를 찾았습니다!
+            </div>
+            <MovieInfo movie={selectedMovie} />
+            <button 
+              onClick={() => window.location.reload()} 
+              className="mt-8 px-6 py-2 bg-zinc-800 text-white rounded-full hover:bg-zinc-700"
+            >
+              다시 하기
+            </button>
+          </div>
+        )}
       </main>
     </div>
   );

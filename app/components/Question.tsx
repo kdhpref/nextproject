@@ -16,7 +16,8 @@ export default function Question({
   onAnswer,
 }: {
   data: QuestionData;
-  onAnswer: (relatedIds: number[]) => void; // 선택된 영화 ID들을 부모에게 전달
+  // [수정] answerText 파라미터 추가
+  onAnswer: (relatedIds: number[], answerText: string) => void; 
 }) {
   return (
     <div className="w-full max-w-2xl animate-fade-in">
@@ -27,7 +28,8 @@ export default function Question({
         {data.options.map((option, index) => (
           <button
             key={index}
-            onClick={() => onAnswer(option.relatedMovieIds)}
+            // [수정] 클릭 시 ID와 함께 텍스트도 전달
+            onClick={() => onAnswer(option.relatedMovieIds, option.text)}
             className="w-full py-3 px-6 rounded-xl text-left transition-all
               bg-white border border-zinc-200 hover:border-blue-500 hover:bg-blue-50 text-zinc-800
               dark:bg-zinc-900 dark:border-zinc-800 dark:hover:border-blue-500 dark:hover:bg-blue-900/20 dark:text-zinc-200"

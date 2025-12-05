@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_KEY = '70eb5d76f804e9cb1b807128a10f88e8'; // 실제 키 유지
+const API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 const BASE_URL = 'https://api.themoviedb.org/3';
 
 // [수정] page 파라미터 추가 (기본값 1)
@@ -39,6 +39,19 @@ export const getMovieDetail = async (id: number) => {
     return response.data;
   } catch (error) {
     return null;
+  }
+};
+
+export const getGenres = async () => {
+  try {
+    const response = await axios.get(
+      `${BASE_URL}/genre/movie/list?api_key=${API_KEY}&language=ko-KR`
+    );
+    // { id: 28, name: "액션" } 형태의 배열을 반환
+    return response.data.genres; 
+  } catch (error) {
+    console.error("Genre fetch error:", error);
+    return [];
   }
 };
 
